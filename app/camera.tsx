@@ -22,6 +22,8 @@ export default function CameraScreen() {
   const [facing, setFacing] = useState<CameraType>('back');
   const [permission, requestPermission] = useCameraPermissions();
   const [isProcessing, setIsProcessing] = useState(false);
+  const [ocrProgress, setOcrProgress] = useState(0);
+  const [ocrStatus, setOcrStatus] = useState('');
   const cameraRef = useRef<CameraView>(null);
 
   useEffect(() => {
@@ -79,8 +81,14 @@ export default function CameraScreen() {
 
   const processReceiptImage = async (imageUri: string) => {
     try {
-      // Extract text using OCR
+      setOcrStatus('Initializing OCR...');
+      setOcrProgress(0);
+      
+      // Extract text using OCR with progress tracking
       const extractedText = await ocrService.extractTextFromImage(imageUri);
+      
+      setOcrStatus('Processing text...');
+      setOcrProgress(80);
       
       if (!extractedText || extractedText.trim().length === 0) {
         Alert.alert('No Text Found', 'Could not extract text from the image. Please try again with a clearer photo.');
@@ -89,6 +97,12 @@ export default function CameraScreen() {
 
       // Parse receipt data using regex
       const receiptData = extractReceiptData(extractedText);
+      
+      setOcrStatus('Complete!');
+      setOcrProgress(100);
+      
+      // Small delay to show completion
+      await new Promise(resolve => setTimeout(resolve, 500));
       
       // Navigate to preview screen with extracted data
       router.push({
@@ -104,6 +118,9 @@ export default function CameraScreen() {
     } catch (error) {
       console.error('Error processing receipt:', error);
       Alert.alert('Processing Error', 'Failed to process the receipt. Please try again.');
+    } finally {
+      setOcrProgress(0);
+      setOcrStatus('');
     }
   };
 
@@ -223,7 +240,17 @@ export default function CameraScreen() {
         <View style={styles.processingOverlay}>
           <View style={styles.processingContainer}>
             <ActivityIndicator size="large" color={theme.colors.primary} />
-            <Text style={styles.processingText}>Processing receipt...</Text>
+            <Text style={styles.processingText}>
+              {ocrStatus || 'Processing receipt...'}
+            </Text>
+            {ocrProgress > 0 && (
+              <View style={styles.progressContainer}>
+                <View style={styles.progressBar}>
+                  <View style={[styles.progressFill, { width: `${ocrProgress}%` }]} />
+                </View>
+                <Text style={styles.progressText}>{ocrProgress}%</Text>
+              </View>
+            )}
           </View>
         </View>
       )}
@@ -427,6 +454,29 @@ const styles = StyleSheet.create({
     fontSize: theme.fontSize.md,
     color: theme.colors.text,
     marginTop: theme.spacing.md,
+    fontWeight: '500',
+  },
+  progressContainer: {
+    marginTop: theme.spacing.lg,
+    width: ms(200),
+    alignItems: 'center',
+  },
+  progressBar: {
+    width: '100%',
+    height: ms(4),
+    backgroundColor: theme.colors.borderLight,
+    borderRadius: ms(2),
+    overflow: 'hidden',
+  },
+  progressFill: {
+    height: '100%',
+    backgroundColor: theme.colors.primary,
+    borderRadius: ms(2),
+  },
+  progressText: {
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.textSecondary,
+    marginTop: theme.spacing.xs,
     fontWeight: '500',
   },
 });
