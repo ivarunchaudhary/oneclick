@@ -42,8 +42,23 @@ export function extractReceiptData(text: string): ReceiptData {
 function extractVendor(text: string): string | null {
   const lines = text.split('\n').map(line => line.trim());
   
-  // Common Indian retail chains and business patterns (enhanced)
+  // First, look for business name patterns in the first few lines
+  // Many receipts have the business name prominently at the top
+  for (let i = 0; i < Math.min(5, lines.length); i++) {
+    const line = lines[i];
+    
+    // Look for lines that look like business names
+    if (isLikelyBusinessName(line)) {
+      return formatVendorName(line);
+    }
+  }
+  
+  // Common retail chains and business patterns (enhanced)
   const knownVendors = [
+    // International/Australian chains
+    'bistro box', 'bistro box departures',
+    'metro cash', 'walmart', 'best price',
+    
     // Retail chains
     'reliance fresh', 'reliance mart', 'reliance digital', 'reliance trends',
     'big bazaar', 'food bazaar', 'fashion at big bazaar',
@@ -55,7 +70,6 @@ function extractVendor(text: string): string | null {
     'hypercity', 'shopper\'s stop',
     'nature\'s basket', 'godrej nature\'s basket',
     'twenty four seven', '24seven', '24x7',
-    'metro cash', 'walmart', 'best price',
     
     // Food chains
     'mcdonald\'s', 'mcdonalds', 'mcd',
@@ -138,6 +152,39 @@ function extractVendor(text: string): string | null {
 }
 
 /**
+ * Check if a line is likely to be a business name (first check)
+ */
+function isLikelyBusinessName(line: string): boolean {
+  if (!line || line.length < 3) return false;
+  
+  // Skip obvious non-business patterns
+  const skipPatterns = [
+    /^\d+[\s-]*\d+[\s-]*\d+/, // Phone numbers
+    /tax\s*invoice|receipt|bill/i, // Document types
+    /take\s*away|quick\s*sale/i, // Service types
+    /till|cashier|invoice\s*#|salesperson/i, // Receipt metadata
+    /^\d+:\d+/i, // Time stamps
+    /\d{6,}/, // Long numbers
+    /gst|abn|phone|ph:/i, // Business details
+  ];
+
+  for (const pattern of skipPatterns) {
+    if (pattern.test(line)) return false;
+  }
+
+  // Must contain letters and be reasonable length
+  if (!/[a-zA-Z]/.test(line) || line.length > 40) return false;
+  
+  // Boost score for business-like words
+  const businessWords = /(?:bistro|box|departures|restaurant|cafe|market|store|shop|hotel|bar|grill)/i;
+  if (businessWords.test(line)) return true;
+  
+  // General business name pattern (2+ words, title case likely)
+  const words = line.split(/\s+/).filter(w => w.length > 0);
+  return words.length >= 2 && words.length <= 5;
+}
+
+/**
  * Check if a line is likely to be a vendor name
  */
 function isLikelyVendorName(line: string): boolean {
@@ -184,29 +231,28 @@ function formatVendorName(name: string): string {
 
 /**
  * Extract date from receipt text
- * Enhanced patterns for ML Kit OCR with multiple formats
+ * Enhanced patterns for ML Kit OCR with multiple formats including international
  */
 function extractDate(text: string): string | null {
   // Enhanced date patterns to match various formats and OCR variations
   const datePatterns = [
+    // Time followed by date (like "12:26 PM 3 Jul 24")
+    /\d{1,2}:\d{2}(?:\s*[AaPp][Mm])?\s+(\d{1,2}\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s+\d{2,4})/gi,
+    // DD Month YY/YYYY (full and abbreviated)
+    /(\d{1,2}\s+(january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{2,4})/gi,
+    /(\d{1,2}\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s+\d{2,4})/gi,
     // DD/MM/YYYY, DD-MM-YYYY, DD.MM.YYYY with optional labels
     /(?:date[:\s]*|bill\s*date[:\s]*|transaction[:\s]*date[:\s]*)?(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{4})/gi,
     // MM/DD/YYYY variants
     /(?:date[:\s]*)?(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{4})/gi,
     // YYYY-MM-DD, YYYY/MM/DD, YYYY.MM.DD
     /(?:date[:\s]*)?(\d{4}[\/\-\.]\d{1,2}[\/\-\.]\d{1,2})/gi,
-    // DD Month YYYY (full month names)
-    /(?:date[:\s]*)?(\d{1,2}\s+(january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{4})/gi,
-    // DD Mon YYYY (abbreviated month names)
-    /(?:date[:\s]*)?(\d{1,2}\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s+\d{4})/gi,
     // Month DD, YYYY
     /(?:date[:\s]*)?((january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{1,2},?\s+\d{4})/gi,
     // DD-Month-YYYY
     /(?:date[:\s]*)?(\d{1,2}[\-\/]\s*(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[\-\/]\s*\d{4})/gi,
     // Time with date patterns (common in receipts)
     /(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{4})\s+\d{1,2}:\d{2}(?::\d{2})?(?:\s*[AaPp][Mm])?/gi,
-    // Just time might indicate today's date
-    /(?:time[:\s]*)?(\d{1,2}:\d{2}(?::\d{2})?(?:\s*[AaPp][Mm])?)/gi
   ];
 
   let bestMatch = null;
@@ -297,40 +343,45 @@ function formatDate(dateStr: string): string {
 
 /**
  * Extract total amount from receipt text
- * Enhanced patterns for ML Kit OCR with better accuracy
+ * Enhanced patterns for international currencies and formats
  */
 function extractTotal(text: string): string | null {
-  // Enhanced total amount patterns with priority scoring
+  // Enhanced total amount patterns with priority scoring for multiple currencies
   const totalPatterns = [
-    // High priority: Explicit total labels
+    // Highest priority: Balance due, Total, Amount payable with $ or AUD
     { 
-      pattern: /(?:(?:grand\s*)?total|net\s*(?:amount|total)|final\s*(?:amount|total)|amount\s*payable)[:\s]*₹?\s*(\d+(?:[,\s]\d+)*(?:\.\d{2})?)/gi,
+      pattern: /(?:balance\s*due|(?:grand\s*)?total|net\s*(?:amount|total)|final\s*(?:amount|total)|amount\s*payable|tendered)[:\s]*\$?\s*(\d+(?:[,\s]\d+)*(?:\.\d{2})?)/gi,
       priority: 10
+    },
+    // High priority: Dollar sign patterns (US/AUD/CAD)
+    {
+      pattern: /\$\s*(\d+(?:[,\s]\d+)*(?:\.\d{2})?)/gi,
+      priority: 9
     },
     // High priority: Total with currency symbol
     {
-      pattern: /(?:total)[:\s]*₹\s*(\d+(?:[,\s]\d+)*(?:\.\d{2})?)/gi,
-      priority: 9
+      pattern: /(?:total)[:\s]*[$₹]\s*(\d+(?:[,\s]\d+)*(?:\.\d{2})?)/gi,
+      priority: 8
     },
-    // Medium-high priority: Amount due/payable
+    // Medium-high priority: Amount due/payable with rupees
     {
       pattern: /(?:amount\s*(?:due|payable)|balance\s*due)[:\s]*₹?\s*(\d+(?:[,\s]\d+)*(?:\.\d{2})?)/gi,
-      priority: 8
+      priority: 7
     },
     // Medium priority: Currency first, then total indicators
     {
-      pattern: /₹\s*(\d+(?:[,\s]\d+)*(?:\.\d{2})?)\s*(?:total|amount|due)?/gi,
-      priority: 7
+      pattern: /[$₹]\s*(\d+(?:[,\s]\d+)*(?:\.\d{2})?)\s*(?:total|amount|due)?/gi,
+      priority: 6
     },
     // Medium priority: Rs/Rupees variations
     {
       pattern: /(?:rs\.?|rupees|inr)[:\s]*(\d+(?:[,\s]\d+)*(?:\.\d{2})?)\s*(?:total|amount)?/gi,
-      priority: 6
-    },
-    // Lower priority: Just currency and numbers
-    {
-      pattern: /(\d+(?:[,\s]\d+)*(?:\.\d{2})?)\s*(?:₹|rs\.?|rupees|inr)/gi,
       priority: 5
+    },
+    // Lower priority: Numbers followed by currency
+    {
+      pattern: /(\d+(?:[,\s]\d+)*(?:\.\d{2})?)\s*(?:[$₹]|rs\.?|rupees|inr|aud|usd)/gi,
+      priority: 4
     },
     // Lowest priority: Large numbers (likely totals)
     {
@@ -381,10 +432,18 @@ function extractTotal(text: string): string | null {
 
   const bestCandidate = candidates[0];
   
+  // Detect currency type from the original text context
+  let currencySymbol = '₹'; // Default to rupees
+  
+  // Check for dollar signs in the text around the amount
+  if (text.includes('$') || /(?:aud|usd|cad|balance\s*due|tendered)/i.test(text)) {
+    currencySymbol = '$';
+  }
+  
   // Format with proper currency symbol and appropriate decimal places
   const formattedAmount = bestCandidate.amount % 1 === 0 
-    ? `₹${bestCandidate.amount.toFixed(0)}` 
-    : `₹${bestCandidate.amount.toFixed(2)}`;
+    ? `${currencySymbol}${bestCandidate.amount.toFixed(0)}` 
+    : `${currencySymbol}${bestCandidate.amount.toFixed(2)}`;
     
   return formattedAmount;
 }
